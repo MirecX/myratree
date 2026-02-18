@@ -1,7 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process';
-import { readFileSync, createReadStream } from 'fs';
-import { join } from 'path';
-import { Readable } from 'stream';
+import { readFileSync } from 'fs';
 import type { Issue } from '../issues/parser.js';
 import type { NovatreeConfig } from '../core/config.js';
 import { generateWorkerPrompt } from './prompt-generator.js';
@@ -68,7 +66,19 @@ export class Worker {
       '-p', 'Execute the task described in the context piped via stdin. Follow all instructions exactly.',
       '--dangerously-skip-permissions',
       '--model', this.config.llm.model,
-      '--append-system-prompt', `You are a worker agent implementing issue #${this.issue.id}: ${this.issue.title}. Your working directory is a git worktree. Make changes, commit them, and write ITHAVEBEENDONE to the issue file when done.`,
+      '--append-system-prompt', [
+        `You are a worker agent implementing issue #${this.issue.id}: ${this.issue.title}.`,
+        `Your working directory is a git worktree.`,
+        ``,
+        `Workflow:`,
+        `1. Read any spec files referenced in the task.`,
+        `2. Implement the changes. Make focused, minimal changes. Follow existing patterns.`,
+        `3. Ensure .gitignore exists and covers build artifacts (node_modules, dist, etc). NEVER commit node_modules.`,
+        `4. Run \`${this.config.worker.testCommand}\` and ensure tests pass.`,
+        `5. Commit your changes with a descriptive message.`,
+        `6. As your final message, output exactly ITHAVEBEENDONE (nothing else on that line).`,
+        `7. If blocked, output STATUS: BLOCKED <reason> as your final message instead.`,
+      ].join('\n'),
     ];
 
     logger.info('worker', `Starting worker for issue #${this.issue.id}`, {
@@ -124,47 +134,61 @@ export class Worker {
   }
 
   private evaluateResult(): void {
-    // Check the issue file for completion markers
-    const issuePath = join(
-      this.projectRoot, '.novatree', 'issues',
-      `${this.issue.id}-${this.issue.slug}.md`,
-    );
-
+    const output = this.state.stdout;
     let message = '';
 
-    try {
-      const content = readFileSync(issuePath, 'utf-8');
-      if (content.includes('ITHAVEBEENDONE')) {
-        this.state.status = 'completed';
-        message = 'Worker completed successfully. Ready for review.';
-        logger.info('worker', `Worker for #${this.issue.id} completed successfully`);
-      } else if (content.includes('STATUS: BLOCKED')) {
-        this.state.status = 'blocked';
-        const blockMatch = content.match(/STATUS: BLOCKED\s*(.+)/);
-        message = `Worker is blocked: ${blockMatch?.[1] ?? 'unknown reason'}`;
-        logger.info('worker', `Worker for #${this.issue.id} is blocked`);
-      } else {
-        this.state.status = this.state.exitCode === 0 ? 'completed' : 'failed';
-        if (this.state.status === 'failed') {
+    if (output.includes('ITHAVEBEENDONE')) {
+      this.state.status = 'completed';
+      message = 'Worker completed successfully. Ready for review.';
+      logger.info('worker', `Worker for #${this.issue.id} completed successfully`);
+    } else if (output.includes('STATUS: BLOCKED')) {
+      this.state.status = 'blocked';
+      const blockMatch = output.match(/STATUS: BLOCKED\s*(.+)/);
+      message = `Worker is blocked: ${blockMatch?.[1] ?? 'unknown reason'}`;
+      logger.info('worker', `Worker for #${this.issue.id} is blocked`);
+    } else {
+      this.state.status = this.state.exitCode === 0 ? 'completed' : 'failed';
+
+      if (this.state.status === 'failed') {
+        message = `Worker failed (exit code ${this.state.exitCode}).`;
+        // Try to parse Claude Code JSON error output
+        const errorDetail = this.extractClaudeCodeError(output, this.state.stderr);
+        if (errorDetail) {
+          message += `\n${errorDetail}`;
+        } else {
           const lastStderr = this.state.stderr.split('\n').filter(Boolean).slice(-5).join('\n');
-          const lastStdout = this.state.stdout.split('\n').filter(Boolean).slice(-5).join('\n');
-          message = `Worker failed (exit code ${this.state.exitCode}).`;
+          const lastStdout = output.split('\n').filter(Boolean).slice(-5).join('\n');
           if (lastStderr) message += `\nStderr: ${lastStderr}`;
           else if (lastStdout) message += `\nOutput: ${lastStdout}`;
-        } else {
-          message = 'Worker exited successfully but did not write ITHAVEBEENDONE.';
         }
-        logger.info('worker', `Worker for #${this.issue.id} exited with code ${this.state.exitCode}`);
+      } else {
+        message = 'Worker exited without signaling completion.';
+        const lastStdout = output.split('\n').filter(Boolean).slice(-5).join('\n');
+        if (lastStdout) message += `\nOutput: ${lastStdout}`;
       }
-    } catch {
-      this.state.status = 'failed';
-      const lastStderr = this.state.stderr.split('\n').filter(Boolean).slice(-5).join('\n');
-      message = `Worker failed - could not read issue file.`;
-      if (lastStderr) message += `\nStderr: ${lastStderr}`;
-      logger.error('worker', `Could not read issue file for #${this.issue.id}`);
+      logger.info('worker', `Worker for #${this.issue.id} exited with code ${this.state.exitCode}`);
     }
 
     this.onFinished?.(this.issue.id, this.state.status, message);
+  }
+
+  private extractClaudeCodeError(stdout: string, stderr: string): string | null {
+    // Claude Code outputs JSON with error details on failure
+    const combined = stdout + '\n' + stderr;
+    for (const line of combined.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('{')) continue;
+      try {
+        const json = JSON.parse(trimmed);
+        if (json.is_error && json.error) {
+          return `Claude Code error: ${json.error}`;
+        }
+        if (json.is_error && json.subtype) {
+          return `Claude Code error: ${json.subtype}`;
+        }
+      } catch { /* not JSON */ }
+    }
+    return null;
   }
 
   getLastOutput(lines = 20): string {

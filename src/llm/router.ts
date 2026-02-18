@@ -9,6 +9,7 @@ interface EndpointState {
   healthy: boolean;
   lastCheck: Date;
   currentRequests: number;
+  workerSlots: number; // slots reserved by external workers (Claude Code subprocesses)
   weightCounter: number;
 }
 
@@ -31,6 +32,7 @@ export class LlmRouter {
       healthy: true, // Assume healthy until first check
       lastCheck: new Date(),
       currentRequests: 0,
+      workerSlots: 0,
       weightCounter: 0,
     }));
   }
@@ -70,7 +72,7 @@ export class LlmRouter {
 
   private selectEndpoint(): EndpointState | null {
     const available = this.endpoints.filter(
-      ep => ep.healthy && ep.currentRequests < ep.config.maxConcurrent,
+      ep => ep.healthy && (ep.currentRequests + ep.workerSlots) < ep.config.maxConcurrent,
     );
     if (available.length === 0) return null;
 
@@ -152,6 +154,23 @@ export class LlmRouter {
       yield* endpoint.client.stream(request);
     } finally {
       endpoint.currentRequests--;
+      this.drainQueue();
+    }
+  }
+
+  reserveWorkerSlot(endpointUrl: string): void {
+    const ep = this.endpoints.find(e => e.config.url === endpointUrl);
+    if (ep) {
+      ep.workerSlots++;
+      logger.info('router', `Reserved worker slot on ${ep.config.name} (${ep.workerSlots} workers, ${ep.currentRequests} requests)`);
+    }
+  }
+
+  releaseWorkerSlot(endpointUrl: string): void {
+    const ep = this.endpoints.find(e => e.config.url === endpointUrl);
+    if (ep && ep.workerSlots > 0) {
+      ep.workerSlots--;
+      logger.info('router', `Released worker slot on ${ep.config.name} (${ep.workerSlots} workers, ${ep.currentRequests} requests)`);
       this.drainQueue();
     }
   }

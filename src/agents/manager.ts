@@ -5,12 +5,14 @@ import type { NovatreeConfig } from '../core/config.js';
 import type { Message, ContentBlock, ToolDefinition, LlmRequest, StreamEvent } from '../llm/types.js';
 import type { LlmRouter } from '../llm/router.js';
 import { IssueTracker } from '../issues/tracker.js';
-import { createWorktree, mergeWorktree, getWorktreeDiff, removeWorktree, worktreePath } from '../core/git.js';
+import { createWorktree, mergeWorktree, getWorktreeDiff, removeWorktree, worktreePath, listWorktrees } from '../core/git.js';
 import { Worker, type WorkerState } from './worker.js';
 import { logger } from '../utils/logger.js';
 
+const DESTRUCTIVE_TOOLS = new Set(['delete_issue', 'spawn_worker', 'merge_issue', 'git_commit']);
+
 export interface ManagerEvent {
-  type: 'text' | 'tool_call' | 'tool_result' | 'error' | 'worker_update' | 'auto_response';
+  type: 'text' | 'tool_call' | 'tool_result' | 'error' | 'worker_update' | 'auto_response' | 'chat_done';
   content: string;
   data?: unknown;
 }
@@ -97,7 +99,7 @@ const MANAGER_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_spec',
-    description: 'Create or update a specification file in the specs/ directory. MUST be called before create_issue so the issue can reference the spec.',
+    description: 'Create or update a specification file in the specs/ directory. MUST be called before create_issue so the issue can reference the spec. specs/readme.md is auto-generated as a lookup table — do not create it manually.',
     input_schema: {
       type: 'object',
       properties: {
@@ -190,11 +192,16 @@ export class Manager {
   private messages: Message[] = [];
   private tracker: IssueTracker;
   private workers: Map<string, Worker> = new Map();
+  private workerEndpoints: Map<string, string> = new Map(); // issueId → endpoint URL
   private workerQueue: QueuedWorker[] = [];
+  private chatBusy = false;
+  private pendingMessages: string[] = [];
   private eventCallback: ManagerEventCallback | null = null;
+  private confirmCallback: ((tool: string, description: string) => Promise<boolean>) | null = null;
   private historyPath: string;
   private managerMdPath: string;
   private systemPrompt: string = '';
+  private _recoveryInfo: string | null = null;
 
   constructor(
     private projectRoot: string,
@@ -208,6 +215,14 @@ export class Manager {
 
   onEvent(callback: ManagerEventCallback): void {
     this.eventCallback = callback;
+  }
+
+  onConfirm(callback: (tool: string, description: string) => Promise<boolean>): void {
+    this.confirmCallback = callback;
+  }
+
+  getRecoveryInfo(): string | null {
+    return this._recoveryInfo;
   }
 
   private emit(event: ManagerEvent): void {
@@ -242,10 +257,38 @@ export class Manager {
       issuesSummary,
       '',
       `## Configuration`,
+      `- Project root: ${this.projectRoot}`,
       `- Yolo mode: ${this.config.manager.yoloMode ? 'ON' : 'OFF'}`,
       `- Test command: ${this.config.worker.testCommand}`,
       `- Build command: ${this.config.worker.buildCommand}`,
     ].join('\n');
+
+    // Ensure specs/readme.md is up to date
+    const specsDir = join(this.projectRoot, this.config.project.specsDir);
+    if (existsSync(specsDir)) {
+      this.regenerateSpecsReadme(specsDir);
+    }
+
+    // Detect orphaned worktrees (exist on disk but have no live Worker)
+    try {
+      const worktrees = await listWorktrees(this.projectRoot);
+      const orphaned: string[] = [];
+      for (const wt of worktrees) {
+        if (!this.workers.has(wt.issueId)) {
+          const issue = this.tracker.get(wt.issueId);
+          if (issue && (issue.status === 'in_progress' || issue.status === 'review')) {
+            this.tracker.updateStatus(wt.issueId, 'open');
+            orphaned.push(`#${wt.issueId} "${issue.title}" (was ${issue.status}, reset to open)`);
+          }
+        }
+      }
+      if (orphaned.length > 0) {
+        this._recoveryInfo = `Found ${orphaned.length} orphaned worktree(s) from a previous session:\n${orphaned.map(o => `  - ${o}`).join('\n')}\nTheir status has been reset to "open". You can spawn_worker to resume or delete_issue to clean up.`;
+        logger.info('manager', 'Recovery: orphaned worktrees detected', { orphaned });
+      }
+    } catch (err) {
+      logger.warn('manager', 'Failed to check for orphaned worktrees', err);
+    }
 
     // Load conversation history (last 50 messages)
     this.loadHistory(50);
@@ -275,22 +318,42 @@ export class Manager {
     appendFileSync(this.historyPath, JSON.stringify(msg) + '\n');
   }
 
-  async chat(userMessage: string): Promise<string> {
+  async chat(userMessage: string): Promise<void> {
+    // Queue message if a chat is already in progress
+    if (this.chatBusy) {
+      this.pendingMessages.push(userMessage);
+      return;
+    }
+
+    this.chatBusy = true;
+    try {
+      await this.processChat(userMessage);
+    } finally {
+      this.chatBusy = false;
+      this.emit({ type: 'chat_done', content: '' });
+
+      // Process any queued messages
+      if (this.pendingMessages.length > 0) {
+        const next = this.pendingMessages.shift()!;
+        this.chat(next);
+      }
+    }
+  }
+
+  private async processChat(userMessage: string): Promise<void> {
     const userMsg: Message = { role: 'user', content: userMessage };
     this.messages.push(userMsg);
     this.persistMessage(userMsg);
 
-    let fullResponse = '';
     let continueLoop = true;
     let iterations = 0;
-    const MAX_TOOL_ITERATIONS = 10;
+    const MAX_TOOL_ITERATIONS = this.config.manager.yoloMode ? Infinity : 25;
 
     while (continueLoop) {
       iterations++;
       if (iterations > MAX_TOOL_ITERATIONS) {
         const msg = `Stopped after ${MAX_TOOL_ITERATIONS} tool calls to prevent infinite loop.`;
         this.emit({ type: 'error', content: msg });
-        fullResponse += `\n${msg}`;
         break;
       }
       const request: LlmRequest = {
@@ -316,7 +379,6 @@ export class Manager {
 
         for (const block of textBlocks) {
           if (block.text) {
-            fullResponse += block.text;
             this.emit({ type: 'text', content: block.text });
           }
         }
@@ -334,13 +396,13 @@ export class Manager {
           if ((this as any)._repeatCount >= 3) {
             const msg = 'Stopped: same tool called 3 times in a row.';
             this.emit({ type: 'error', content: msg });
-            fullResponse += `\n${msg}`;
             (this as any)._repeatCount = 0;
             break;
           }
 
           // Execute tools and continue
           const toolResults: ContentBlock[] = [];
+          let spawnedWorker = false;
           for (const toolBlock of toolUseBlocks) {
             this.emit({ type: 'tool_call', content: `Calling ${toolBlock.name}...`, data: toolBlock });
             const result = await this.executeTool(toolBlock.name!, toolBlock.input!);
@@ -350,23 +412,30 @@ export class Manager {
               tool_use_id: toolBlock.id,
               content: result,
             });
+            if (toolBlock.name === 'spawn_worker' && result.startsWith('Worker spawned')) {
+              spawnedWorker = true;
+            }
           }
 
           const toolResultMsg: Message = { role: 'user', content: toolResults };
           this.messages.push(toolResultMsg);
           this.persistMessage(toolResultMsg);
+
+          // After spawning a worker, break out of the loop immediately
+          // so the chat is unblocked for further user interaction
+          if (spawnedWorker) {
+            this.emit({ type: 'text', content: `Worker spawned. You'll be notified when it finishes.` });
+            continueLoop = false;
+          }
         } else {
           continueLoop = false;
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         this.emit({ type: 'error', content: errorMsg });
-        fullResponse = `Error communicating with LLM: ${errorMsg}`;
         continueLoop = false;
       }
     }
-
-    return fullResponse;
   }
 
   async *chatStream(userMessage: string): AsyncGenerator<ManagerEvent> {
@@ -403,8 +472,32 @@ export class Manager {
     }
   }
 
+  private buildToolDescription(name: string, input: Record<string, unknown>): string {
+    switch (name) {
+      case 'delete_issue':
+        return `Delete issue #${input.issue_id}`;
+      case 'spawn_worker':
+        return `Spawn worker for issue #${input.issue_id}`;
+      case 'merge_issue':
+        return `Merge issue #${input.issue_id} to main`;
+      case 'git_commit':
+        return `Git commit: "${input.message}" (${(input.files as string[])?.length ?? 0} files)`;
+      default:
+        return `${name}(${JSON.stringify(input)})`;
+    }
+  }
+
   private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     logger.info('manager', `Executing tool: ${name}`, input);
+
+    // Confirmation gate for destructive tools when yolo mode is off
+    if (DESTRUCTIVE_TOOLS.has(name) && !this.config.manager.yoloMode && this.confirmCallback) {
+      const description = this.buildToolDescription(name, input);
+      const approved = await this.confirmCallback(name, description);
+      if (!approved) {
+        return 'Action cancelled by user.';
+      }
+    }
 
     switch (name) {
       case 'create_issue': {
@@ -446,7 +539,7 @@ export class Manager {
         if (!issue) return `Issue #${issueId} not found.`;
         const wtPath = worktreePath(this.projectRoot, issueId, issue.slug);
         try {
-          const diff = await getWorktreeDiff(wtPath);
+          const diff = await getWorktreeDiff(wtPath, this.config.project.mainBranch);
           return diff || 'No changes found in worktree.';
         } catch (err) {
           return `Error getting diff: ${err instanceof Error ? err.message : String(err)}`;
@@ -457,14 +550,14 @@ export class Manager {
         const issueId = input.issue_id as string;
         const issue = this.tracker.get(issueId);
         if (!issue) return `Issue #${issueId} not found.`;
-        const result = await mergeWorktree(this.projectRoot, issueId, issue.slug);
+        const result = await mergeWorktree(this.projectRoot, issueId, issue.slug, this.config.project.mainBranch);
         if (result.success) {
           this.tracker.updateStatus(issueId, 'done');
           await removeWorktree(this.projectRoot, issueId, issue.slug);
           this.workers.delete(issueId);
-          return `Merged and closed issue #${issueId}. Worktree cleaned up.`;
+          return `Merged and closed issue #${issueId}. ${result.message}. Worktree cleaned up.`;
         }
-        return `Merge failed: ${result.message}`;
+        return `Merge failed: ${result.message}. Do NOT retry — tell the user what went wrong and ask how to proceed.`;
       }
 
       case 'run_tests': {
@@ -490,6 +583,7 @@ export class Manager {
         writeFileSync(specPath, content, 'utf-8');
         const relativePath = join(this.config.project.specsDir, filename);
         logger.info('manager', `Created spec: ${relativePath}`);
+        this.regenerateSpecsReadme(specsDir);
         return `Created spec file: ${relativePath}`;
       }
 
@@ -557,7 +651,13 @@ export class Manager {
         const files = input.files as string[];
         const message = input.message as string;
         try {
-          const git = (await import('../core/git.js')).getGit(this.projectRoot);
+          const { getGit } = await import('../core/git.js');
+          const git = getGit(this.projectRoot);
+          // Verify we're on main/master before committing
+          const status = await git.status();
+          if (status.current !== this.config.project.mainBranch) {
+            return `Cannot commit: project root is on branch "${status.current}", expected "${this.config.project.mainBranch}".`;
+          }
           await git.add(files);
           await git.commit(message);
           return `Committed ${files.length} file(s): ${message}`;
@@ -641,7 +741,7 @@ export class Manager {
 
     try {
       // Create worktree
-      const wt = await createWorktree(this.projectRoot, issueId, issue.slug);
+      const wt = await createWorktree(this.projectRoot, issueId, issue.slug, this.config.project.mainBranch);
 
       // Update issue status
       this.tracker.updateStatus(issueId, 'in_progress');
@@ -658,6 +758,12 @@ export class Manager {
       this.workers.set(issueId, worker);
 
       worker.onComplete((id, status, message) => {
+        // Release the LLM endpoint slot reserved for this worker
+        const epUrl = this.workerEndpoints.get(id);
+        if (epUrl) {
+          this.router.releaseWorkerSlot(epUrl);
+          this.workerEndpoints.delete(id);
+        }
         this.emit({
           type: 'worker_update',
           content: `Worker #${id} ${status}: ${message}`,
@@ -668,6 +774,10 @@ export class Manager {
         // Feed result back into manager conversation
         this.handleWorkerResult(id, status, message);
       });
+
+      // Reserve an LLM slot for the worker before starting it
+      this.router.reserveWorkerSlot(healthyEndpoint.url);
+      this.workerEndpoints.set(issueId, healthyEndpoint.url);
 
       await worker.start(healthyEndpoint.url);
 
@@ -771,6 +881,49 @@ export class Manager {
     return paths;
   }
 
+  private regenerateSpecsReadme(specsDir: string): void {
+    try {
+      const files = readdirSync(specsDir)
+        .filter(f => f.endsWith('.md') && f !== 'readme.md')
+        .sort();
+
+      const rows: string[] = [];
+      for (const file of files) {
+        const content = readFileSync(join(specsDir, file), 'utf-8');
+        const heading = content.match(/^#\s+(.+)/m)?.[1] ?? file.replace(/\.md$/, '');
+        rows.push(`| [${file}](${file}) | ${heading} |`);
+      }
+
+      const specIndex = [
+        '## Spec Index',
+        '',
+        '| Spec | Scope |',
+        '|---|---|',
+        ...rows,
+        '',
+      ].join('\n');
+
+      const readmePath = join(specsDir, 'readme.md');
+
+      if (existsSync(readmePath)) {
+        // Preserve everything above ## Spec Index, replace the rest
+        const existing = readFileSync(readmePath, 'utf-8');
+        const marker = existing.indexOf('## Spec Index');
+        if (marker >= 0) {
+          writeFileSync(readmePath, existing.slice(0, marker) + specIndex, 'utf-8');
+        } else {
+          // Append spec index to existing content
+          writeFileSync(readmePath, existing.trimEnd() + '\n\n' + specIndex, 'utf-8');
+        }
+      } else if (rows.length > 0) {
+        // No readme yet — write a minimal one (manager will flesh it out via create_spec)
+        writeFileSync(readmePath, specIndex, 'utf-8');
+      }
+    } catch (err) {
+      logger.warn('manager', 'Failed to regenerate specs/readme.md', err);
+    }
+  }
+
   private runCommand(command: string, cwd: string): Promise<string> {
     return new Promise((resolve) => {
       const [cmd, ...args] = command.split(' ');
@@ -820,10 +973,19 @@ export class Manager {
     return this.config.manager.yoloMode;
   }
 
+  getBaseBranch(): string {
+    return this.config.project.mainBranch;
+  }
+
   shutdown(): void {
-    for (const [, worker] of this.workers) {
+    for (const [issueId, worker] of this.workers) {
       worker.kill();
+      const epUrl = this.workerEndpoints.get(issueId);
+      if (epUrl) {
+        this.router.releaseWorkerSlot(epUrl);
+      }
     }
+    this.workerEndpoints.clear();
     this.tracker.stopWatching();
   }
 }

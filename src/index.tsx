@@ -185,7 +185,9 @@ async function main() {
       const config = loadConfig(projectRoot);
       initLogger(join(projectRoot, '.novatree'));
 
-      render(<App projectRoot={projectRoot} config={config} />);
+      render(<App projectRoot={projectRoot} config={config} />, {
+        exitOnCtrlC: true,
+      });
       break;
     }
 

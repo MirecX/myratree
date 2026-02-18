@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, useInput, useApp } from 'ink';
+import { Box, useInput, useApp, useStdout } from 'ink';
 import { IssueList } from './IssueList.js';
 import { Chat } from './Chat.js';
 import { AgentStatus } from './AgentStatus.js';
@@ -22,6 +22,8 @@ interface ChatMessage {
 
 export function Layout({ manager, router }: LayoutProps) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const [termSize, setTermSize] = useState({ rows: stdout?.rows ?? 24, columns: stdout?.columns ?? 80 });
   const [activePanel, setActivePanel] = useState<Panel>('chat');
   const [issues, setIssues] = useState<Issue[]>([]);
   const [selectedIssue, setSelectedIssue] = useState(0);
@@ -31,6 +33,21 @@ export function Layout({ manager, router }: LayoutProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [diffView, setDiffView] = useState<{ title: string; content: string } | null>(null);
   const [, setTick] = useState(0);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    tool: string;
+    description: string;
+    resolve: (approved: boolean) => void;
+  } | null>(null);
+
+  // Track terminal resize
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => {
+      setTermSize({ rows: stdout.rows, columns: stdout.columns });
+    };
+    stdout.on('resize', onResize);
+    return () => { stdout.off('resize', onResize); };
+  }, [stdout]);
 
   // Refresh issues periodically
   useEffect(() => {
@@ -50,7 +67,9 @@ export function Layout({ manager, router }: LayoutProps) {
   useEffect(() => {
     manager.onEvent((event) => {
       if (event.type === 'text') {
-        // Handled via chat response (user-initiated)
+        setChatMessages(prev => [...prev, { role: 'assistant', content: event.content }]);
+      } else if (event.type === 'chat_done') {
+        setIsLoading(false);
       } else if (event.type === 'auto_response') {
         // Manager auto-responded to a worker event
         setChatMessages(prev => [...prev, { role: 'assistant', content: event.content }]);
@@ -62,26 +81,52 @@ export function Layout({ manager, router }: LayoutProps) {
         setChatMessages(prev => [...prev, { role: 'system', content: `Error: ${event.content}` }]);
       }
     });
+
+    // Register confirmation callback for destructive tools
+    manager.onConfirm((tool, description) => {
+      return new Promise(resolve => {
+        setPendingConfirmation({ tool, description, resolve });
+        setChatMessages(prev => [...prev, {
+          role: 'system',
+          content: `Manager wants to call ${tool}: ${description}. Type 'y' to approve or 'n' to deny.`,
+        }]);
+      });
+    });
+
+    // Display recovery info if any orphaned worktrees were found
+    const recoveryInfo = manager.getRecoveryInfo();
+    if (recoveryInfo) {
+      setChatMessages(prev => [...prev, { role: 'system', content: recoveryInfo }]);
+    }
   }, [manager]);
 
-  const handleSend = useCallback(async (message: string) => {
+  const handleSend = useCallback((message: string) => {
+    // Handle pending confirmation responses
+    if (pendingConfirmation) {
+      const input = message.trim().toLowerCase();
+      setChatMessages(prev => [...prev, { role: 'user', content: message }]);
+      if (input === 'y' || input === 'yes') {
+        pendingConfirmation.resolve(true);
+        setChatMessages(prev => [...prev, { role: 'system', content: 'Approved.' }]);
+      } else {
+        pendingConfirmation.resolve(false);
+        setChatMessages(prev => [...prev, { role: 'system', content: 'Denied.' }]);
+      }
+      setPendingConfirmation(null);
+      return;
+    }
+
     setChatMessages(prev => [...prev, { role: 'user', content: message }]);
     setIsLoading(true);
 
-    try {
-      const response = await manager.chat(message);
-      if (response) {
-        setChatMessages(prev => [...prev, { role: 'assistant', content: response }]);
-      }
-    } catch (err) {
+    manager.chat(message).catch(err => {
       setChatMessages(prev => [...prev, {
         role: 'system',
         content: `Error: ${err instanceof Error ? err.message : String(err)}`,
       }]);
-    } finally {
       setIsLoading(false);
-    }
-  }, [manager]);
+    });
+  }, [manager, pendingConfirmation]);
 
   useInput((input, key) => {
     if (diffView) return; // DiffView handles its own input
@@ -132,7 +177,7 @@ export function Layout({ manager, router }: LayoutProps) {
             issue.id,
             issue.slug,
           );
-          getWorktreeDiff(wtPath).then(diff => {
+          getWorktreeDiff(wtPath, manager.getBaseBranch()).then(diff => {
             setDiffView({ title: `Diff: #${issue.id} ${issue.title}`, content: diff || 'No changes' });
           }).catch(() => {
             setDiffView({ title: `Diff: #${issue.id}`, content: 'No worktree found for this issue.' });
@@ -151,7 +196,7 @@ export function Layout({ manager, router }: LayoutProps) {
 
   if (diffView) {
     return (
-      <Box flexDirection="column" width="100%" height="100%">
+      <Box flexDirection="column" width={termSize.columns} height={termSize.rows}>
         <DiffView
           title={diffView.title}
           content={diffView.content}
@@ -162,7 +207,7 @@ export function Layout({ manager, router }: LayoutProps) {
   }
 
   return (
-    <Box flexDirection="column" width="100%" height="100%">
+    <Box flexDirection="column" width={termSize.columns} height={termSize.rows} overflow="hidden">
       <IssueList
         issues={issues}
         selectedIndex={selectedIssue}
@@ -174,6 +219,7 @@ export function Layout({ manager, router }: LayoutProps) {
           focused={activePanel === 'chat'}
           onSend={handleSend}
           isLoading={isLoading}
+          awaitingInput={pendingConfirmation !== null}
         />
       </Box>
       <AgentStatus

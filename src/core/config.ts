@@ -68,7 +68,7 @@ export function defaultConfig(): NovatreeConfig {
     },
     project: {
       specsDir: 'specs/',
-      mainBranch: 'main',
+      mainBranch: 'master',
     },
   };
 }

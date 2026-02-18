@@ -26,14 +26,38 @@ export async function createWorktree(
   projectRoot: string,
   issueId: string,
   slug: string,
+  baseBranch: string,
 ): Promise<WorktreeInfo> {
   const git = getGit(projectRoot);
   const branch = branchName(issueId, slug);
   const wtPath = worktreePath(projectRoot, issueId, slug);
 
-  logger.info('git', `Creating worktree: ${wtPath} on branch ${branch}`);
+  // If worktree already exists on disk, reuse it
+  if (existsSync(wtPath)) {
+    logger.info('git', `Reusing existing worktree: ${wtPath}`);
+    const log = await simpleGit(wtPath).log({ maxCount: 1 });
+    return {
+      path: wtPath,
+      branch,
+      commitHash: log.latest?.hash ?? 'unknown',
+      issueId,
+    };
+  }
 
-  await git.raw(['worktree', 'add', wtPath, '-b', branch]);
+  // If branch exists but worktree doesn't (stale from previous run), delete the branch first
+  try {
+    const branches = await git.branchLocal();
+    if (branches.all.includes(branch)) {
+      logger.info('git', `Deleting stale branch ${branch} before creating worktree`);
+      await git.deleteLocalBranch(branch, true);
+    }
+  } catch {
+    // Ignore — branch might not exist, which is fine
+  }
+
+  logger.info('git', `Creating worktree: ${wtPath} on branch ${branch} from ${baseBranch}`);
+
+  await git.raw(['worktree', 'add', wtPath, '-b', branch, baseBranch]);
 
   const log = await simpleGit(wtPath).log({ maxCount: 1 });
   const commitHash = log.latest?.hash ?? 'unknown';
@@ -99,27 +123,78 @@ export async function listWorktrees(projectRoot: string): Promise<WorktreeInfo[]
   return worktrees;
 }
 
-export async function getWorktreeDiff(wtPath: string): Promise<string> {
+export async function getWorktreeDiff(wtPath: string, baseBranch: string): Promise<string> {
   const git = simpleGit(wtPath);
-  const diff = await git.diff(['HEAD~1..HEAD']);
-  if (diff) return diff;
-  // If no commits yet beyond the base, show staged + unstaged
-  const diffAll = await git.diff();
+
+  // Diff all changes since branching from base branch
+  try {
+    const mergeBase = (await git.raw(['merge-base', 'HEAD', baseBranch])).trim();
+    const diff = await git.diff([`${mergeBase}..HEAD`]);
+    if (diff) return diff;
+  } catch {
+    // merge-base can fail if base branch doesn't exist or no common ancestor
+  }
+
+  // Fallback: show staged + unstaged changes
   const diffStaged = await git.diff(['--staged']);
-  return diffStaged + '\n' + diffAll;
+  const diffAll = await git.diff();
+  const combined = (diffStaged + '\n' + diffAll).trim();
+  return combined || '';
+}
+
+export async function ensureCleanBranch(projectRoot: string, baseBranch: string): Promise<{ ok: boolean; error?: string }> {
+  const git = getGit(projectRoot);
+
+  const status = await git.status();
+  const current = status.current;
+  if (current !== baseBranch) {
+    return { ok: false, error: `Project root is on branch "${current}", expected "${baseBranch}". Checkout the base branch first.` };
+  }
+
+  if (status.modified.length > 0 || status.staged.length > 0 || status.conflicted.length > 0) {
+    const dirty = [...status.modified, ...status.staged, ...status.conflicted];
+    return { ok: false, error: `Working directory has uncommitted changes: ${dirty.slice(0, 5).join(', ')}${dirty.length > 5 ? ` (+${dirty.length - 5} more)` : ''}. Commit or stash them first.` };
+  }
+
+  return { ok: true };
 }
 
 export async function mergeWorktree(
   projectRoot: string,
   issueId: string,
   slug: string,
+  baseBranch: string,
 ): Promise<{ success: boolean; message: string }> {
   const git = getGit(projectRoot);
   const branch = branchName(issueId, slug);
 
+  // Verify the branch actually exists
   try {
-    await git.merge([branch, '--no-ff', '-m', `Merge ${branch}: issue #${issueId}`]);
-    return { success: true, message: `Merged ${branch} to main` };
+    const branches = await git.branchLocal();
+    if (!branches.all.includes(branch)) {
+      return { success: false, message: `Branch ${branch} does not exist. Was this issue already merged or cleaned up?` };
+    }
+  } catch (err) {
+    return { success: false, message: `Failed to check branches: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // Ensure base branch is clean before merging
+  const check = await ensureCleanBranch(projectRoot, baseBranch);
+  if (!check.ok) {
+    return { success: false, message: check.error! };
+  }
+
+  try {
+    await git.merge([branch, '--no-ff', '-m', `Merge #${issueId}: ${slug}`]);
+
+    // Verify the merge commit references the correct branch
+    const log = await git.log({ maxCount: 1 });
+    const commitMsg = log.latest?.message ?? '';
+    if (!commitMsg.includes(`#${issueId}`)) {
+      logger.warn('git', `Merge commit message mismatch: expected #${issueId}, got: ${commitMsg}`);
+    }
+
+    return { success: true, message: `Merged ${branch} into ${baseBranch} (${log.latest?.hash?.substring(0, 7) ?? '?'})` };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, message };

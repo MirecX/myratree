@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
-import TextInput from 'ink-text-input';
+import { ChatInput } from './ChatInput.js';
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -13,16 +13,28 @@ interface ChatProps {
   focused: boolean;
   onSend: (message: string) => void;
   isLoading: boolean;
+  awaitingInput?: boolean;
 }
 
-export function Chat({ messages, focused, onSend, isLoading }: ChatProps) {
+export function Chat({ messages, focused, onSend, isLoading, awaitingInput }: ChatProps) {
   const [input, setInput] = useState('');
   const [scrollOffset, setScrollOffset] = useState(0);
   const { stdout } = useStdout();
-  const termHeight = stdout?.rows ?? 24;
+  const [termHeight, setTermHeight] = useState(stdout?.rows ?? 24);
+
+  // Track terminal resize and reset scroll to bottom
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => {
+      setTermHeight(stdout.rows);
+      setScrollOffset(0);
+    };
+    stdout.on('resize', onResize);
+    return () => { stdout.off('resize', onResize); };
+  }, [stdout]);
 
   const handleSubmit = (value: string) => {
-    if (value.trim() && !isLoading) {
+    if (value.trim() && (!isLoading || awaitingInput)) {
       onSend(value.trim());
       setInput('');
     }
@@ -82,7 +94,7 @@ export function Chat({ messages, focused, onSend, isLoading }: ChatProps) {
         {scrollOffset > 0 && <Text color="yellow"> [scrolled +{scrollOffset}]</Text>}
       </Box>
 
-      <Box flexDirection="column" flexGrow={1} overflow="hidden">
+      <Box flexDirection="column" height={availableLines} overflow="hidden">
         {visibleMessages.map((msg, i) => (
           <Box key={i} marginBottom={1} flexDirection="column">
             <Text bold color={msg.role === 'user' ? 'green' : msg.role === 'system' ? 'yellow' : 'blue'}>
@@ -92,7 +104,7 @@ export function Chat({ messages, focused, onSend, isLoading }: ChatProps) {
           </Box>
         ))}
 
-        {isLoading && scrollOffset === 0 && (
+        {isLoading && !awaitingInput && scrollOffset === 0 && (
           <Box>
             <Text color="yellow">Thinking...</Text>
           </Box>
@@ -102,11 +114,12 @@ export function Chat({ messages, focused, onSend, isLoading }: ChatProps) {
       <Box borderStyle="round" borderColor={focused ? 'green' : 'gray'} paddingX={1}>
         <Text color="green">&gt; </Text>
         {focused ? (
-          <TextInput
+          <ChatInput
             value={input}
             onChange={setInput}
             onSubmit={handleSubmit}
-            placeholder={isLoading ? 'Waiting for response...' : 'Type a message...'}
+            focus={focused}
+            placeholder={awaitingInput ? 'y/n to approve or deny...' : isLoading ? 'Waiting for response...' : 'Type a message...'}
           />
         ) : (
           <Text dimColor>{input || 'Press Tab to focus chat'}</Text>

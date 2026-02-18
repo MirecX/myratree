@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 
 interface DiffViewProps {
@@ -10,7 +10,16 @@ interface DiffViewProps {
 export function DiffView({ title, content, onClose }: DiffViewProps) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const { stdout } = useStdout();
-  const termHeight = (stdout?.rows ?? 24) - 6; // Reserve for border + header + footer
+  const [rows, setRows] = useState(stdout?.rows ?? 24);
+
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => setRows(stdout.rows);
+    stdout.on('resize', onResize);
+    return () => { stdout.off('resize', onResize); };
+  }, [stdout]);
+
+  const termHeight = rows - 6; // Reserve for border + header + footer
 
   useInput((input, key) => {
     if (input === 'q' || key.escape) {
