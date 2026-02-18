@@ -32,7 +32,7 @@ Local-first, LLM-driven git project manager with an integrated issue tracker. Co
 ## Install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/MirecX/myratree.git
 cd myratree
 npm install
 npm run build
