@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { spawn as spawnProcess } from 'child_process';
 import { join } from 'path';
-import type { NovatreeConfig } from '../core/config.js';
+import type { MyratreeConfig } from '../core/config.js';
 import type { Message, ContentBlock, ToolDefinition, LlmRequest, StreamEvent } from '../llm/types.js';
 import type { LlmRouter } from '../llm/router.js';
 import { IssueTracker } from '../issues/tracker.js';
@@ -205,12 +205,12 @@ export class Manager {
 
   constructor(
     private projectRoot: string,
-    private config: NovatreeConfig,
+    private config: MyratreeConfig,
     private router: LlmRouter,
   ) {
     this.tracker = new IssueTracker(projectRoot);
-    this.historyPath = join(projectRoot, '.novatree', 'manager-history.jsonl');
-    this.managerMdPath = join(projectRoot, '.novatree', 'manager.md');
+    this.historyPath = join(projectRoot, '.myratree', 'manager-history.jsonl');
+    this.managerMdPath = join(projectRoot, '.myratree', 'manager.md');
   }
 
   onEvent(callback: ManagerEventCallback): void {
@@ -639,7 +639,7 @@ export class Manager {
         }
         this.workers.delete(issueId);
         // Delete the issue file
-        const issuePath = join(this.projectRoot, '.novatree', 'issues', `${issueId}-${issue.slug}.md`);
+        const issuePath = join(this.projectRoot, '.myratree', 'issues', `${issueId}-${issue.slug}.md`);
         if (existsSync(issuePath)) {
           const { unlinkSync } = await import('fs');
           unlinkSync(issuePath);

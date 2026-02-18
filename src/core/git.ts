@@ -15,11 +15,11 @@ export function getGit(projectRoot: string): SimpleGit {
 }
 
 export function branchName(issueId: string, slug: string): string {
-  return `novatree/${issueId}-${slug}`;
+  return `myratree/${issueId}-${slug}`;
 }
 
 export function worktreePath(projectRoot: string, issueId: string, slug: string): string {
-  return join(projectRoot, '.novatree', 'worktrees', `${issueId}-${slug}`);
+  return join(projectRoot, '.myratree', 'worktrees', `${issueId}-${slug}`);
 }
 
 export async function createWorktree(
@@ -111,10 +111,10 @@ export async function listWorktrees(projectRoot: string): Promise<WorktreeInfo[]
     const branch = branchLine.replace('branch refs/heads/', '');
     const commitHash = headLine?.replace('HEAD ', '') ?? 'unknown';
 
-    // Only include novatree worktrees
-    if (!branch.startsWith('novatree/')) continue;
+    // Only include myratree worktrees
+    if (!branch.startsWith('myratree/')) continue;
 
-    const match = branch.match(/^novatree\/(\d+)-/);
+    const match = branch.match(/^myratree\/(\d+)-/);
     const issueId = match?.[1] ?? 'unknown';
 
     worktrees.push({ path: wtPath, branch, commitHash, issueId });

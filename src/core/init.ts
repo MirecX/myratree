@@ -3,9 +3,9 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 import { defaultConfig, saveConfig } from './config.js';
 
-const DEFAULT_MANAGER_SYSTEM_PROMPT = `# Novatree Manager Agent
+const DEFAULT_MANAGER_SYSTEM_PROMPT = `# Myratree Manager Agent
 
-You are a PROJECT MANAGER powered by Novatree. You manage the USER'S project (the git repo you're running in), not Novatree itself. You do NOT write code yourself.
+You are a PROJECT MANAGER powered by Myratree. You manage the USER'S project (the git repo you're running in), not Myratree itself. You do NOT write code yourself.
 
 ## Your Role
 
@@ -93,15 +93,15 @@ export interface InitResult {
   alreadyExisted: boolean;
 }
 
-export function initNovatree(projectRoot: string): InitResult {
-  const novatreeDir = join(projectRoot, '.novatree');
-  const alreadyExisted = existsSync(novatreeDir);
+export function initMyratree(projectRoot: string): InitResult {
+  const myratreeDir = join(projectRoot, '.myratree');
+  const alreadyExisted = existsSync(myratreeDir);
   const created: string[] = [];
 
   const dirs = [
-    novatreeDir,
-    join(novatreeDir, 'issues'),
-    join(novatreeDir, 'worktrees'),
+    myratreeDir,
+    join(myratreeDir, 'issues'),
+    join(myratreeDir, 'worktrees'),
     join(projectRoot, 'specs'),
   ];
 
@@ -112,51 +112,51 @@ export function initNovatree(projectRoot: string): InitResult {
     }
   }
 
-  const configFile = join(novatreeDir, 'config.json');
+  const configFile = join(myratreeDir, 'config.json');
   if (!existsSync(configFile)) {
     saveConfig(projectRoot, defaultConfig());
     created.push(configFile);
   }
 
-  const managerSystemFile = join(novatreeDir, 'manager-system.md');
+  const managerSystemFile = join(myratreeDir, 'manager-system.md');
   if (!existsSync(managerSystemFile)) {
     writeFileSync(managerSystemFile, DEFAULT_MANAGER_SYSTEM_PROMPT, 'utf-8');
     created.push(managerSystemFile);
   }
 
-  const managerMdFile = join(novatreeDir, 'manager.md');
+  const managerMdFile = join(myratreeDir, 'manager.md');
   if (!existsSync(managerMdFile)) {
     writeFileSync(managerMdFile, DEFAULT_MANAGER_MD, 'utf-8');
     created.push(managerMdFile);
   }
 
-  const historyFile = join(novatreeDir, 'manager-history.jsonl');
+  const historyFile = join(myratreeDir, 'manager-history.jsonl');
   if (!existsSync(historyFile)) {
     writeFileSync(historyFile, '', 'utf-8');
     created.push(historyFile);
   }
 
-  // Ensure .novatree/ is in .gitignore
+  // Ensure .myratree/ is in .gitignore
   const gitignorePath = join(projectRoot, '.gitignore');
   if (existsSync(gitignorePath)) {
     const gitignore = readFileSync(gitignorePath, 'utf-8');
-    if (!gitignore.includes('.novatree')) {
-      writeFileSync(gitignorePath, gitignore.trimEnd() + '\n.novatree/\n', 'utf-8');
+    if (!gitignore.includes('.myratree')) {
+      writeFileSync(gitignorePath, gitignore.trimEnd() + '\n.myratree/\n', 'utf-8');
     }
   } else {
-    writeFileSync(gitignorePath, '.novatree/\n', 'utf-8');
+    writeFileSync(gitignorePath, '.myratree/\n', 'utf-8');
     created.push(gitignorePath);
   }
 
   return { created, alreadyExisted };
 }
 
-export function resetNovatree(projectRoot: string): string[] {
-  const novatreeDir = join(projectRoot, '.novatree');
+export function resetMyratree(projectRoot: string): string[] {
+  const myratreeDir = join(projectRoot, '.myratree');
   const cleared: string[] = [];
 
   // Remove worktrees via git first
-  const worktreesDir = join(novatreeDir, 'worktrees');
+  const worktreesDir = join(myratreeDir, 'worktrees');
   if (existsSync(worktreesDir)) {
     const entries = readdirSync(worktreesDir);
     for (const entry of entries) {
@@ -170,9 +170,9 @@ export function resetNovatree(projectRoot: string): string[] {
       cleared.push(`Removed worktree: ${entry}`);
     }
 
-    // Clean up novatree/* branches
+    // Clean up myratree/* branches
     try {
-      const branches = execSync('git branch --list "novatree/*"', { cwd: projectRoot, encoding: 'utf-8' });
+      const branches = execSync('git branch --list "myratree/*"', { cwd: projectRoot, encoding: 'utf-8' });
       for (const branch of branches.split('\n').filter(Boolean)) {
         const branchName = branch.trim();
         try {
@@ -184,7 +184,7 @@ export function resetNovatree(projectRoot: string): string[] {
   }
 
   // Clear issues
-  const issuesDir = join(novatreeDir, 'issues');
+  const issuesDir = join(myratreeDir, 'issues');
   if (existsSync(issuesDir)) {
     const files = readdirSync(issuesDir);
     for (const f of files) {
@@ -194,21 +194,21 @@ export function resetNovatree(projectRoot: string): string[] {
   }
 
   // Clear history
-  const historyPath = join(novatreeDir, 'manager-history.jsonl');
+  const historyPath = join(myratreeDir, 'manager-history.jsonl');
   if (existsSync(historyPath)) {
     writeFileSync(historyPath, '', 'utf-8');
     cleared.push('Cleared manager history');
   }
 
   // Reset manager.md
-  const managerMdPath = join(novatreeDir, 'manager.md');
+  const managerMdPath = join(myratreeDir, 'manager.md');
   if (existsSync(managerMdPath)) {
     writeFileSync(managerMdPath, DEFAULT_MANAGER_MD, 'utf-8');
     cleared.push('Reset manager.md');
   }
 
   // Reset system prompt (force update to latest)
-  const systemPromptPath = join(novatreeDir, 'manager-system.md');
+  const systemPromptPath = join(myratreeDir, 'manager-system.md');
   if (existsSync(systemPromptPath)) {
     rmSync(systemPromptPath);
     cleared.push('Cleared manager-system.md (will be recreated on init)');

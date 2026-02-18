@@ -1,4 +1,4 @@
-# Novatree
+# Myratree
 
 Local-first, LLM-driven git project manager with an integrated issue tracker. Combines a React Ink TUI with a two-tier agent architecture: a **Manager agent** that chats with you, creates issues, and reviews results, plus **Worker agents** (Claude Code CLI instances) that implement features in isolated git worktrees.
 
@@ -10,7 +10,7 @@ Local-first, LLM-driven git project manager with an integrated issue tracker. Co
 │ ● #1 login-form   ││ You: Add a login form with    │
 │   [in_progress]    ││ email and password...         │
 │                    ││                               │
-│ ○ #2 dark-mode     ││ Novatree: I'll create an      │
+│ ○ #2 dark-mode     ││ Myratree: I'll create an      │
 │   [open]           ││ issue for that. Spawning       │
 │                    ││ worker now...                  │
 │ ✓ #3 api-cache     ││                               │
@@ -18,7 +18,7 @@ Local-first, LLM-driven git project manager with an integrated issue tracker. Co
 │                    ││                               │
 ├─ Worktrees ────────┤│                               │
 │ 001-login-form     ││                               │
-│  novatree/001-...  ││                               │
+│  myratree/001-...  ││                               │
 └────────────────────┘└───────────────────────────────┘
 ┌─ Agent Status ─────────────────────────────────────┐
 │ worker-1: 001-login-form | running | 5m elapsed    │
@@ -33,7 +33,7 @@ Local-first, LLM-driven git project manager with an integrated issue tracker. Co
 
 ```bash
 git clone <repo-url>
-cd novatree
+cd myratree
 npm install
 npm run build
 npm link
@@ -44,25 +44,25 @@ npm link
 ```bash
 # Initialize in any git repo
 cd your-project
-novatree init
+myratree init
 
 # Configure your LLM endpoint
-novatree config set llm.endpoints[0].url http://192.168.5.64:11434
-novatree config set llm.model qwen2.5-coder-32b
+myratree config set llm.endpoints[0].url http://192.168.5.64:11434
+myratree config set llm.model qwen2.5-coder-32b
 
 # Launch the TUI
-novatree
+myratree
 ```
 
 ## CLI Commands
 
 ```bash
-novatree                # Launch TUI
-novatree init           # Initialize .novatree/ in current repo
-novatree issue create "Add login form" --specs specs/auth.md --priority high
-novatree issue list     # List all issues
-novatree status         # Show project status
-novatree config set <key> <value>
+myratree                # Launch TUI
+myratree init           # Initialize .myratree/ in current repo
+myratree issue create "Add login form" --specs specs/auth.md --priority high
+myratree issue list     # List all issues
+myratree status         # Show project status
+myratree config set <key> <value>
 ```
 
 ## Key Bindings
@@ -80,7 +80,7 @@ novatree config set <key> <value>
 
 ## Configuration
 
-Edit `.novatree/config.json`:
+Edit `.myratree/config.json`:
 
 ```json
 {
@@ -106,7 +106,7 @@ Edit `.novatree/config.json`:
     "model": "qwen2.5-coder-32b"
   },
   "manager": {
-    "systemPromptFile": ".novatree/manager-system.md",
+    "systemPromptFile": ".myratree/manager-system.md",
     "yoloMode": false
   },
   "worker": {
@@ -128,7 +128,7 @@ Multiple LLM endpoints are load-balanced with weighted round-robin and automatic
 
 ```
 your-project/
-├── .novatree/              # GITIGNORED - local agent state
+├── .myratree/              # GITIGNORED - local agent state
 │   ├── config.json         # Endpoint config
 │   ├── manager.md          # Manager's persistent knowledge
 │   ├── manager-system.md   # Manager system prompt
@@ -143,7 +143,7 @@ your-project/
 └── src/
 ```
 
-`.novatree/` is fully gitignored — each developer runs `novatree init` to create their own. The `specs/` directory is the shared project bible, version-controlled and referenced by issues.
+`.myratree/` is fully gitignored — each developer runs `myratree init` to create their own. The `specs/` directory is the shared project bible, version-controlled and referenced by issues.
 
 ## How It Works
 

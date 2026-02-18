@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { App } from './app.js';
-import { initNovatree } from './core/init.js';
+import { initMyratree } from './core/init.js';
 import { loadConfig, findProjectRoot, saveConfig } from './core/config.js';
 import { IssueTracker } from './issues/tracker.js';
 import { initLogger } from './utils/logger.js';
@@ -12,17 +12,17 @@ const command = args[0];
 
 function printUsage() {
   console.log(`
-novatree - LLM-driven git project manager
+myratree - LLM-driven git project manager
 
 Usage:
-  novatree              Launch the TUI
-  novatree init         Initialize novatree in the current repo
-  novatree reset        Clear all issues, history, and worktrees (keeps config)
-  novatree issue create <title> [--specs <files>] [--priority <level>]
-  novatree issue list   List all issues
-  novatree status       Show project status
-  novatree config set <key> <value>
-  novatree help         Show this help message
+  myratree              Launch the TUI
+  myratree init         Initialize myratree in the current repo
+  myratree reset        Clear all issues, history, and worktrees (keeps config)
+  myratree issue create <title> [--specs <files>] [--priority <level>]
+  myratree issue list   List all issues
+  myratree status       Show project status
+  myratree config set <key> <value>
+  myratree help         Show this help message
 `);
 }
 
@@ -30,11 +30,11 @@ async function main() {
   switch (command) {
     case 'init': {
       const projectRoot = process.cwd();
-      const result = initNovatree(projectRoot);
+      const result = initMyratree(projectRoot);
       if (result.alreadyExisted) {
-        console.log('Novatree already initialized. Updated missing files:');
+        console.log('Myratree already initialized. Updated missing files:');
       } else {
-        console.log('Novatree initialized successfully!');
+        console.log('Myratree initialized successfully!');
       }
       for (const path of result.created) {
         console.log(`  + ${path}`);
@@ -42,14 +42,14 @@ async function main() {
       if (result.created.length === 0) {
         console.log('  (everything already exists)');
       }
-      console.log('\nNext: edit .novatree/config.json to configure your LLM endpoints.');
+      console.log('\nNext: edit .myratree/config.json to configure your LLM endpoints.');
       break;
     }
 
     case 'issue': {
       const projectRoot = findProjectRoot();
       if (!projectRoot) {
-        console.error('Not in a novatree project. Run `novatree init` first.');
+        console.error('Not in a myratree project. Run `myratree init` first.');
         process.exit(1);
       }
 
@@ -59,7 +59,7 @@ async function main() {
       if (subcommand === 'create') {
         const title = args[2];
         if (!title) {
-          console.error('Usage: novatree issue create <title> [--specs <files>] [--priority <level>]');
+          console.error('Usage: myratree issue create <title> [--specs <files>] [--priority <level>]');
           process.exit(1);
         }
 
@@ -90,7 +90,7 @@ async function main() {
     case 'status': {
       const projectRoot = findProjectRoot();
       if (!projectRoot) {
-        console.error('Not in a novatree project. Run `novatree init` first.');
+        console.error('Not in a myratree project. Run `myratree init` first.');
         process.exit(1);
       }
 
@@ -98,7 +98,7 @@ async function main() {
       const tracker = new IssueTracker(projectRoot);
       const issues = tracker.list();
 
-      console.log('Novatree Status');
+      console.log('Myratree Status');
       console.log('===============');
       console.log(`Project root: ${projectRoot}`);
       console.log(`LLM endpoints: ${config.llm.endpoints.map(e => e.name).join(', ')}`);
@@ -114,7 +114,7 @@ async function main() {
     case 'config': {
       const projectRoot = findProjectRoot();
       if (!projectRoot) {
-        console.error('Not in a novatree project. Run `novatree init` first.');
+        console.error('Not in a myratree project. Run `myratree init` first.');
         process.exit(1);
       }
 
@@ -141,7 +141,7 @@ async function main() {
         saveConfig(projectRoot, config);
         console.log(`Set ${args[2]} = ${args[3]}`);
       } else {
-        console.error('Usage: novatree config set <key> <value>');
+        console.error('Usage: myratree config set <key> <value>');
         process.exit(1);
       }
       break;
@@ -150,17 +150,17 @@ async function main() {
     case 'reset': {
       const projectRoot = findProjectRoot();
       if (!projectRoot) {
-        console.error('Not in a novatree project. Run `novatree init` first.');
+        console.error('Not in a myratree project. Run `myratree init` first.');
         process.exit(1);
       }
-      const { resetNovatree } = await import('./core/init.js');
-      const cleared = resetNovatree(projectRoot);
-      console.log('Novatree reset complete:');
+      const { resetMyratree } = await import('./core/init.js');
+      const cleared = resetMyratree(projectRoot);
+      console.log('Myratree reset complete:');
       for (const item of cleared) {
         console.log(`  - ${item}`);
       }
       // Re-init to recreate defaults
-      const result = initNovatree(projectRoot);
+      const result = initMyratree(projectRoot);
       for (const path of result.created) {
         console.log(`  + ${path}`);
       }
@@ -178,12 +178,17 @@ async function main() {
       // Launch TUI
       const projectRoot = findProjectRoot();
       if (!projectRoot) {
-        console.error('Not in a novatree project. Run `novatree init` first.');
+        console.error('Not in a myratree project. Run `myratree init` first.');
         process.exit(1);
       }
 
       const config = loadConfig(projectRoot);
-      initLogger(join(projectRoot, '.novatree'));
+      initLogger(join(projectRoot, '.myratree'));
+
+      if (config.llm.debugLog) {
+        const { enableLlmDebugLog } = await import('./llm/client.js');
+        enableLlmDebugLog(join(projectRoot, '.myratree', 'llm-debug.csv'));
+      }
 
       render(<App projectRoot={projectRoot} config={config} />, {
         exitOnCtrlC: true,

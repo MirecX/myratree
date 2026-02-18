@@ -13,9 +13,9 @@ const LEVEL_ORDER: Record<LogLevel, number> = {
 let logFile: string | null = null;
 let minLevel: LogLevel = 'info';
 
-export function initLogger(novatreeDir: string, level: LogLevel = 'info') {
-  mkdirSync(novatreeDir, { recursive: true });
-  logFile = join(novatreeDir, 'novatree.log');
+export function initLogger(myratreeDir: string, level: LogLevel = 'info') {
+  mkdirSync(myratreeDir, { recursive: true });
+  logFile = join(myratreeDir, 'myratree.log');
   minLevel = level;
 }
 

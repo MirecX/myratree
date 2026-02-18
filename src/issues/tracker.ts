@@ -10,7 +10,7 @@ export class IssueTracker {
   private changeListeners: Array<() => void> = [];
 
   constructor(private projectRoot: string) {
-    this.issuesDir = join(projectRoot, '.novatree', 'issues');
+    this.issuesDir = join(projectRoot, '.myratree', 'issues');
   }
 
   private getNextId(): string {
@@ -33,7 +33,7 @@ export class IssueTracker {
   ): Issue {
     const id = this.getNextId();
     const slug = slugify(title);
-    const branch = `novatree/${id}-${slug}`;
+    const branch = `myratree/${id}-${slug}`;
 
     const issue: Issue = {
       id,

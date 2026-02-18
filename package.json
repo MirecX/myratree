@@ -1,10 +1,10 @@
 {
-  "name": "novatree",
+  "name": "myratree",
   "version": "1.0.0",
   "description": "Local-first, LLM-driven git project manager with integrated issue tracker",
   "type": "module",
   "bin": {
-    "novatree": "./dist/index.js"
+    "myratree": "./dist/index.js"
   },
   "scripts": {
     "build": "tsup",
