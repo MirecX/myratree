@@ -17,6 +17,7 @@ novatree - LLM-driven git project manager
 Usage:
   novatree              Launch the TUI
   novatree init         Initialize novatree in the current repo
+  novatree reset        Clear all issues, history, and worktrees (keeps config)
   novatree issue create <title> [--specs <files>] [--priority <level>]
   novatree issue list   List all issues
   novatree status       Show project status
@@ -142,6 +143,26 @@ async function main() {
       } else {
         console.error('Usage: novatree config set <key> <value>');
         process.exit(1);
+      }
+      break;
+    }
+
+    case 'reset': {
+      const projectRoot = findProjectRoot();
+      if (!projectRoot) {
+        console.error('Not in a novatree project. Run `novatree init` first.');
+        process.exit(1);
+      }
+      const { resetNovatree } = await import('./core/init.js');
+      const cleared = resetNovatree(projectRoot);
+      console.log('Novatree reset complete:');
+      for (const item of cleared) {
+        console.log(`  - ${item}`);
+      }
+      // Re-init to recreate defaults
+      const result = initNovatree(projectRoot);
+      for (const path of result.created) {
+        console.log(`  + ${path}`);
       }
       break;
     }

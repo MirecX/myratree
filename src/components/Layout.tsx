@@ -50,7 +50,10 @@ export function Layout({ manager, router }: LayoutProps) {
   useEffect(() => {
     manager.onEvent((event) => {
       if (event.type === 'text') {
-        // Handled via chat response
+        // Handled via chat response (user-initiated)
+      } else if (event.type === 'auto_response') {
+        // Manager auto-responded to a worker event
+        setChatMessages(prev => [...prev, { role: 'assistant', content: event.content }]);
       } else if (event.type === 'tool_call') {
         setChatMessages(prev => [...prev, { role: 'system', content: event.content }]);
       } else if (event.type === 'worker_update') {
@@ -160,12 +163,12 @@ export function Layout({ manager, router }: LayoutProps) {
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
+      <IssueList
+        issues={issues}
+        selectedIndex={selectedIssue}
+        focused={activePanel === 'issues'}
+      />
       <Box flexGrow={1}>
-        <IssueList
-          issues={issues}
-          selectedIndex={selectedIssue}
-          focused={activePanel === 'issues'}
-        />
         <Chat
           messages={chatMessages}
           focused={activePanel === 'chat'}
@@ -177,6 +180,8 @@ export function Layout({ manager, router }: LayoutProps) {
         workers={manager.getWorkers()}
         endpoints={router.getHealth()}
         queueLength={router.getQueueLength()}
+        workerQueueLength={manager.getWorkerQueueLength()}
+        maxConcurrent={manager.getMaxConcurrent()}
         yoloMode={manager.isYoloMode()}
       />
     </Box>

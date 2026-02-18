@@ -10,36 +10,34 @@ interface IssueListProps {
 }
 
 export function IssueList({ issues, selectedIndex, focused }: IssueListProps) {
+  const inProgress = issues.filter(i => i.status === 'in_progress');
+
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={focused ? 'cyan' : 'gray'} width={28} paddingX={1}>
-      <Box marginBottom={1}>
+    <Box flexDirection="column" borderStyle="single" borderColor={focused ? 'cyan' : 'gray'} paddingX={1}>
+      <Box>
         <Text bold color={focused ? 'cyan' : 'white'}> Issues </Text>
+        {inProgress.length > 0 && (
+          <Text dimColor>
+            {' '}| Worktrees: {inProgress.map(i => `${i.id}-${i.slug}`).join(', ')}
+          </Text>
+        )}
       </Box>
 
-      {issues.length === 0 ? (
-        <Text dimColor>No issues yet</Text>
-      ) : (
-        issues.map((issue, i) => (
-          <Box key={issue.id}>
+      <Box flexDirection="row" gap={2} flexWrap="wrap">
+        {issues.length === 0 ? (
+          <Text dimColor>No issues yet</Text>
+        ) : (
+          issues.map((issue, i) => (
             <Text
+              key={issue.id}
               color={i === selectedIndex ? 'cyan' : getStatusColor(issue.status)}
               inverse={i === selectedIndex && focused}
             >
-              {' '}{getStatusIcon(issue.status)} #{issue.id} {issue.title.substring(0, 16)}
+              {getStatusIcon(issue.status)} #{issue.id} {issue.title.substring(0, 24)} [{issue.status}]
             </Text>
-          </Box>
-        ))
-      )}
-
-      <Box marginTop={1}>
-        <Text bold dimColor> Worktrees </Text>
+          ))
+        )}
       </Box>
-      {issues.filter(i => i.status === 'in_progress').map(issue => (
-        <Box key={issue.id} flexDirection="column">
-          <Text dimColor> {issue.id}-{issue.slug}</Text>
-          <Text dimColor>  {issue.branch}</Text>
-        </Box>
-      ))}
     </Box>
   );
 }

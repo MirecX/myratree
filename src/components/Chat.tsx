@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Box, Text, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 
 interface ChatMessage {
@@ -17,6 +17,9 @@ interface ChatProps {
 
 export function Chat({ messages, focused, onSend, isLoading }: ChatProps) {
   const [input, setInput] = useState('');
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const { stdout } = useStdout();
+  const termHeight = stdout?.rows ?? 24;
 
   const handleSubmit = (value: string) => {
     if (value.trim() && !isLoading) {
@@ -25,16 +28,61 @@ export function Chat({ messages, focused, onSend, isLoading }: ChatProps) {
     }
   };
 
-  // Show last N messages that fit
-  const visibleMessages = messages.slice(-20);
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    setScrollOffset(0);
+  }, [messages.length]);
+
+  // Reserve lines: border(2) + header(2) + input box(3) + agent status bar(~4) + buffer(1)
+  const reservedLines = 12;
+  const availableLines = Math.max(4, termHeight - reservedLines);
+
+  // Calculate visible window with scroll offset
+  const { visibleMessages, canScrollUp, canScrollDown } = useMemo(() => {
+    // First figure out how many messages fit in a window
+    const windowMessages = (startFromEnd: number): ChatMessage[] => {
+      let lineCount = isLoading && startFromEnd === 0 ? 1 : 0;
+      const result: ChatMessage[] = [];
+      const endIdx = messages.length - startFromEnd;
+
+      for (let i = endIdx - 1; i >= 0; i--) {
+        const msg = messages[i];
+        const contentLines = msg.content.split('\n').length;
+        const msgLines = 1 + contentLines + 1;
+
+        if (lineCount + msgLines > availableLines && result.length > 0) break;
+        lineCount += msgLines;
+        result.unshift(msg);
+      }
+      return result;
+    };
+
+    const visible = windowMessages(scrollOffset);
+    const canUp = scrollOffset < messages.length - 1 && visible[0] !== messages[0];
+    const canDown = scrollOffset > 0;
+
+    return { visibleMessages: visible, canScrollUp: canUp, canScrollDown: canDown };
+  }, [messages, availableLines, isLoading, scrollOffset]);
+
+  // Scroll with PageUp/PageDown — only handle scroll keys, don't swallow others
+  useInput((_input, key) => {
+    if (!focused) return;
+    if (key.pageUp) {
+      setScrollOffset(prev => Math.min(prev + 5, Math.max(0, messages.length - 1)));
+    } else if (key.pageDown) {
+      setScrollOffset(prev => Math.max(0, prev - 5));
+    }
+  }, { isActive: focused });
 
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={focused ? 'cyan' : 'gray'} flexGrow={1} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color={focused ? 'cyan' : 'white'}> Chat </Text>
+        {canScrollUp && <Text dimColor> [Shift+Up for more]</Text>}
+        {scrollOffset > 0 && <Text color="yellow"> [scrolled +{scrollOffset}]</Text>}
       </Box>
 
-      <Box flexDirection="column" flexGrow={1}>
+      <Box flexDirection="column" flexGrow={1} overflow="hidden">
         {visibleMessages.map((msg, i) => (
           <Box key={i} marginBottom={1} flexDirection="column">
             <Text bold color={msg.role === 'user' ? 'green' : msg.role === 'system' ? 'yellow' : 'blue'}>
@@ -44,7 +92,7 @@ export function Chat({ messages, focused, onSend, isLoading }: ChatProps) {
           </Box>
         ))}
 
-        {isLoading && (
+        {isLoading && scrollOffset === 0 && (
           <Box>
             <Text color="yellow">Thinking...</Text>
           </Box>

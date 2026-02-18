@@ -7,12 +7,15 @@ interface AgentStatusProps {
   workers: Map<string, Worker>;
   endpoints: EndpointHealth[];
   queueLength: number;
+  workerQueueLength: number;
+  maxConcurrent: number;
   yoloMode: boolean;
 }
 
-export function AgentStatus({ workers, endpoints, queueLength, yoloMode }: AgentStatusProps) {
+export function AgentStatus({ workers, endpoints, queueLength, workerQueueLength, maxConcurrent, yoloMode }: AgentStatusProps) {
   const workerEntries = Array.from(workers.entries());
   const healthyCount = endpoints.filter(e => e.healthy).length;
+  const runningCount = workerEntries.filter(([, w]) => w.getState().status === 'running').length;
 
   return (
     <Box
@@ -50,13 +53,27 @@ export function AgentStatus({ workers, endpoints, queueLength, yoloMode }: Agent
           )}
         </Box>
 
-        <Box>
-          <Text dimColor>LLM: </Text>
-          <Text color={healthyCount > 0 ? 'green' : 'red'}>
-            {healthyCount}/{endpoints.length} healthy
-          </Text>
-          <Text dimColor> | Queue: </Text>
-          <Text>{queueLength}</Text>
+        <Box flexDirection="column" alignItems="flex-end">
+          <Box>
+            <Text dimColor>Workers: </Text>
+            <Text color={runningCount >= maxConcurrent ? 'yellow' : 'green'}>
+              {runningCount}/{maxConcurrent}
+            </Text>
+            {workerQueueLength > 0 && (
+              <>
+                <Text dimColor> | Queued: </Text>
+                <Text color="yellow">{workerQueueLength}</Text>
+              </>
+            )}
+          </Box>
+          <Box>
+            <Text dimColor>LLM: </Text>
+            <Text color={healthyCount > 0 ? 'green' : 'red'}>
+              {healthyCount}/{endpoints.length} healthy
+            </Text>
+            <Text dimColor> | LLM Queue: </Text>
+            <Text>{queueLength}</Text>
+          </Box>
         </Box>
       </Box>
     </Box>
