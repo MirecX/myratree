@@ -5,25 +5,25 @@ Local-first, LLM-driven git project manager with an integrated issue tracker. Co
 ## Architecture
 
 ```
-┌─ Issues ──────────┐┌─ Chat ────────────────────────┐
+┌─ Issues ───────────┐┌─ Chat ────────────────────────┐
 │                    ││                               │
-│ ● #1 login-form   ││ You: Add a login form with    │
+│ ● #1 login-form    ││ You: Add a login form with    │
 │   [in_progress]    ││ email and password...         │
 │                    ││                               │
 │ ○ #2 dark-mode     ││ Myratree: I'll create an      │
-│   [open]           ││ issue for that. Spawning       │
-│                    ││ worker now...                  │
-│ ✓ #3 api-cache     ││                               │
-│   [done]           ││ > _                            │
+│   [open]           ││ issue for that. Spawning      │
+│                    ││ worker now...                 │
+│   #3 api-cache     ││                               │
+│   [done]           ││ > _                           │
 │                    ││                               │
 ├─ Worktrees ────────┤│                               │
 │ 001-login-form     ││                               │
 │  myratree/001-...  ││                               │
 └────────────────────┘└───────────────────────────────┘
-┌─ Agent Status ─────────────────────────────────────┐
-│ worker-1: 001-login-form | running | 5m elapsed    │
-│ LLM: workstation (3/3 healthy) | Queue: 0          │
-└────────────────────────────────────────────────────┘
+┌─ Agent Status ──────────────────────────────────────┐
+│ worker-1: 001-login-form | running | 5m elapsed     │
+│ LLM: workstation (3/3 healthy) | Queue: 0           │
+└─────────────────────────────────────────────────────┘
 ```
 
 - **Manager Agent** — Persistent LLM running inside the TUI. Chats with you, creates/manages issues, spawns workers, reviews diffs, runs tests, merges results.
